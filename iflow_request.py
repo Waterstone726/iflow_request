@@ -220,11 +220,12 @@ if __name__ == "__main__":
     
     # 立即执行一次并进行可视化
     check_market(is_manual=True)
+    print("--- 任务完成，脚本自动退出 ---")
     
-    # 设定计划任务
-    schedule.every().day.at("10:15").do(check_market)
-    schedule.every().day.at("22:15").do(check_market)
+    # # 设定计划任务
+    # schedule.every().day.at("10:15").do(check_market)
+    # schedule.every().day.at("22:15").do(check_market)
     
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(60)

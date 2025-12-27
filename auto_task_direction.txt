@@ -1,0 +1,29 @@
+第二步：配置操作系统定时触发
+根据你的系统，选择以下任一方式：
+
+1. Windows 用户：使用“任务计划程序”(Task Scheduler)
+这是最常用的方式，图形化界面操作：
+
+按下 Win + R，输入 taskschd.msc 并回车。
+
+点击右侧的 “创建基本任务”。
+
+触发器：选择“每天”，设定为你想要的时刻（如 1015）。
+
+操作：选择“启动程序”。
+
+程序或脚本：输入你的 Python 解释器路径（例如 CUsersYourNameAppDataLocalProgramsPythonPython39python.exe）。
+
+提示：在命令行输入 where python 可以找到这个路径。
+
+添加参数：输入你脚本的完整路径（例如 DScriptssteam_bot.py）。
+
+起始于：输入脚本所在的文件夹路径（这很重要，否则图片可能不知道保存在哪）。
+
+2. Linux  macOS 用户：使用 crontab
+打开终端，输入 crontab -e，添加以下行：
+
+Bash
+
+# 每天 1015 和 2215 运行一次
+15 10,22    usrbinpython3 pathtoyoursteam_bot.py
