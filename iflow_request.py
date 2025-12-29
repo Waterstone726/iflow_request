@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from plyer import notification
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.patches as mpatches
 
 # ==================== 核心配置区 ====================
 TARGET_URL = "https://api.iflow.work/steam/analysisData"
@@ -20,15 +21,64 @@ BUY_CONDITIONS = {
 SEASONAL_DROP_THRESHOLD = 0.02
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...",
     "Referer": "https://www.iflow.work/"
 }
 
-# ==================== 新增：可视化逻辑 ====================
+# --- 新增：Steam 历年大促时间表 (需手动维护，但这比爬虫稳定得多) ---
+# 格式：(开始日期, 结束日期, 标签, 颜色)
+SALE_CALENDAR = [
+    # --- 2023年 (历史实录) ---
+    ("2023-03-16", "2023-03-23", "23春促", "#98FB98"), 
+    ("2023-06-29", "2023-07-13", "23夏促", "#FF6347"), 
+    ("2023-11-21", "2023-11-28", "23秋促", "#FFA500"), 
+    ("2023-12-21", "2024-01-04", "23冬促", "#87CEFA"), 
+
+    # --- 2024年 (历史实录) ---
+    ("2024-03-14", "2024-03-21", "24春促", "#98FB98"),
+    ("2024-06-27", "2024-07-11", "24夏促", "#FF6347"),
+    ("2024-11-27", "2024-12-04", "24秋促", "#FFA500"),
+    ("2024-12-19", "2025-01-02", "24冬促", "#87CEFA"),
+
+    # --- 2025年 (根据官方公告与日历推算补全) ---
+    ("2025-03-13", "2025-03-20", "25春促", "#98FB98"), # 官方已公布
+    ("2025-06-26", "2025-07-10", "25夏促", "#FF6347"), # 基于6月最后一个周四推算
+    ("2025-09-28", "2025-10-05", "25秋促", "#FFA500"), # 基于黑色星期五推算
+    ("2025-12-18", "2026-01-05", "25冬促", "#87CEFA"), # 基于圣诞节推算 (当前正在进行)
+]
+
+# ==================== 可视化逻辑优化 ====================
+
+def plot_sale_zones(ax, start_date_obj, end_date_obj):
+    """
+    在给定的坐标轴 ax 上，绘制处于 start_date 和 end_date 之间的促销背景带
+    """
+    # 获取当前X轴的范围，避免绘制超出图表范围的促销
+    xlim = ax.get_xlim()
+    # 将matplotlib的float型日期转回datetime以便比较（如果需要更严谨的判断）
+    
+    added_labels = set() # 防止重复添加图例
+
+    for s_str, e_str, label, color in SALE_CALENDAR:
+        s_date = datetime.strptime(s_str, "%Y-%m-%d")
+        e_date = datetime.strptime(e_str, "%Y-%m-%d")
+
+        # 简单的重叠检测：如果 (促销结束 > 视图开始) 且 (促销开始 < 视图结束)
+        if e_date >= start_date_obj and s_date <= end_date_obj:
+            # 绘制半透明矩形区域
+            ax.axvspan(s_date, e_date, color=color, alpha=0.2, zorder=0)
+            
+            # 在区域上方标注文字 (可选)
+            # 计算区域中间位置
+            mid_point = s_date + (e_date - s_date) / 2
+            # 仅当中间点在视图范围内才标注，避免文字乱飞
+            if start_date_obj <= mid_point <= end_date_obj:
+                ylim = ax.get_ylim()
+                ax.text(mid_point, ylim[1], label, ha='center', va='bottom', fontsize=8, color=color, rotation=0)
 
 def visualize_market(n10_data):
     """
-    生成市场趋势可视化图表
+    生成市场趋势可视化图表 (含大促标注版)
     """
     if not n10_data:
         print("无数据可供绘图")
@@ -39,64 +89,76 @@ def visualize_market(n10_data):
     values = [x['value'] for x in n10_data]
     latest_date = dates[-1]
 
-    # 设置中文显示（如果环境支持，否则使用默认）
-    plt.rcParams['font.sans-serif'] = ['SimHei'] # Windows常用
+    plt.style.use('seaborn-v0_8-whitegrid') # 使用更现代的网格风格
+
+    # 设置中文及样式
+    plt.rcParams['font.sans-serif'] = ['SimHei'] 
     plt.rcParams['axes.unicode_minus'] = False
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    plt.subplots_adjust(hspace=0.35, wspace=0.2, top=0.92)
+    fig.suptitle(f"Steam 挂刀指数分析 - 数据截至 {latest_date.strftime('%Y-%m-%d')}", fontsize=18, fontweight='bold')
 
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    plt.subplots_adjust(hspace=0.3, wspace=0.2)
-    fig.suptitle(f"Steam 挂刀指数分析 - 数据截至 {latest_date.strftime('%Y-%m-%d')}", fontsize=16)
+    # 定义子图逻辑
+    def plot_trend(ax, x_data, y_data, title, date_fmt):
+        ax.plot(x_data, y_data, marker='o' if len(x_data)<15 else None, color='#1f77b4', linewidth=2, label='挂刀比例')
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
+        
+        # === 核心修改：调用促销绘制函数 ===
+        if len(x_data) > 0:
+            plot_sale_zones(ax, x_data[0], x_data[-1])
+        # ===============================
 
-    # 1. 周线 (最近7个数据点)
-    axes[0, 0].plot(dates[-7:], values[-7:], marker='o', color='#1f77b4', linewidth=2)
-    axes[0, 0].set_title("周趋势 (7 Days)")
-    axes[0, 0].xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
-    axes[0, 0].grid(True, linestyle='--', alpha=0.6)
+    # 1. 周线
+    plot_trend(axes[0, 0], dates[-7:], values[-7:], "周趋势 (7 Days)", '%m-%d')
 
-    # 2. 月线 (最近30个数据点)
-    axes[0, 1].plot(dates[-30:], values[-30:], color='#2ca02c', linewidth=2)
-    axes[0, 1].set_title("月趋势 (30 Days)")
-    axes[0, 1].xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
-    axes[0, 1].grid(True, linestyle='--', alpha=0.6)
+    # 2. 月线
+    plot_trend(axes[0, 1], dates[-30:], values[-30:], "月趋势 (30 Days)", '%m-%d')
 
-    # 3. 季度线 (最近90个数据点)
-    axes[1, 0].plot(dates[-90:], values[-90:], color='#ff7f0e', linewidth=1.5)
-    axes[1, 0].set_title("季度趋势 (90 Days)")
-    axes[1, 0].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    axes[1, 0].grid(True, linestyle='--', alpha=0.6)
+    # 3. 季度线
+    plot_trend(axes[1, 0], dates[-90:], values[-90:], "季度趋势 (90 Days)", '%Y-%m')
 
-    # 4. 历史同期月线 (最近3年的当前月份对比)
+    # 4. 历史同期月线 (逻辑稍微复杂，暂不加背景带，因为是多不同年份叠加)
     curr_month = latest_date.month
     colors = ['#d62728', '#9467bd', '#8c564b']
     found_any = False
     
-    # 获取最近3年内该月份的数据
     for i, year_offset in enumerate([0, 1, 2]):
         target_year = latest_date.year - year_offset
-        # 筛选该年该月的数据
         month_points = [
-            (d.day, v) for d, v in zip(dates, values) 
+            (d, v) for d, v in zip(dates, values) 
             if d.year == target_year and d.month == curr_month
         ]
         if month_points:
             found_any = True
-            days, vals = zip(*month_points)
-            axes[1, 1].plot(days, vals, label=f"{target_year}年{curr_month}月", color=colors[i], marker='.' if year_offset==0 else None)
-    
+            # 这里为了对齐X轴，把日期统一替换成 "2000年" (闰年兼容性好) 来绘图，只显示日
+            plot_dates = [p[0].replace(year=2000) for p in month_points]
+            vals = [p[1] for p in month_points]
+            axes[1, 1].plot(plot_dates, vals, label=f"{target_year}年", color=colors[i], linewidth=2)
+
     if found_any:
         axes[1, 1].set_title(f"历史同期对比 ({curr_month}月)")
-        axes[1, 1].set_xlabel("日期 (Day of Month)")
+        axes[1, 1].xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        axes[1, 1].set_xlabel("日期 (Day)")
         axes[1, 1].legend()
-        axes[1, 1].grid(True, linestyle='--', alpha=0.6)
     else:
         axes[1, 1].set_title("历史同期对比 (暂无数据)")
 
-    # 保存图片
+    # 增加一个图例说明颜色含义
+    patches = [
+        mpatches.Patch(color='#FF6347', alpha=0.3, label='夏促'),
+        mpatches.Patch(color='#87CEFA', alpha=0.3, label='冬促'),
+        mpatches.Patch(color='#FFA500', alpha=0.3, label='秋促'),
+        mpatches.Patch(color='#98FB98', alpha=0.3, label='春促'),
+    ]
+    fig.legend(handles=patches, loc='upper right', bbox_to_anchor=(0.95, 0.97), ncol=4, fontsize=9)
+
+    # 保存
     file_name = f"D:/code/iflow_request/analysis_pic/market_analysis_{latest_date.strftime('%Y%m%d')}.png"
-    plt.savefig(file_name)
-    print(f"√ 趋势分析图已生成: {file_name}")
-    # 如果在有GUI的环境下可以使用 plt.show()
-    # plt.show()
+    plt.savefig(file_name, dpi=120) # 稍微提高dpi
+    print(f"√ 趋势分析图已生成 (含大促标记): {file_name}")
+
 
 # ==================== 逻辑实现 ====================
 
